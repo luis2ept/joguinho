@@ -1,0 +1,163 @@
+<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Batman: Fuga da Caverna</title>
+<style>
+  :root { --gold:#f5bd45; --ink:#17130f; --stone:#b77b32; }
+  *{box-sizing:border-box}
+  body{margin:0;background:#17111e;color:#fff;font-family:system-ui,-apple-system,Segoe UI,sans-serif;display:grid;place-items:center;min-height:100vh;padding:16px}
+  .game-shell{width:min(1100px,100%);border:4px solid #4b2a12;border-radius:12px;overflow:hidden;background:#251b18;box-shadow:0 18px 60px #0009}
+  .topbar{display:flex;align-items:center;justify-content:space-between;gap:12px;padding:10px 14px;background:linear-gradient(#34251b,#1d1715);border-bottom:3px solid #100d0c}
+  .brand{font-weight:900;letter-spacing:.08em;color:var(--gold);text-shadow:2px 2px #000;font-size:clamp(14px,2.2vw,22px)}
+  .hud{display:flex;align-items:center;gap:14px;font-weight:800;color:#f9d56e}
+  .hud span{white-space:nowrap}
+  button{border:2px solid #f5c85e;background:#5c3519;color:#ffe9a4;border-radius:8px;padding:7px 11px;font-weight:800;cursor:pointer}
+  button:hover{filter:brightness(1.2)}
+  .stage{position:relative;background:#4a3526}
+  canvas{display:block;width:100%;height:auto;aspect-ratio:1100/650;touch-action:none}
+  .help{padding:10px 14px;background:#201714;color:#d9c4a0;font-size:13px;display:flex;flex-wrap:wrap;gap:8px 18px;justify-content:space-between}
+  .help strong{color:#ffd66c}
+  .overlay{position:absolute;inset:0;display:grid;place-items:center;background:#090708b8;padding:20px;text-align:center}
+  .panel{max-width:430px;background:#211915;border:3px solid #e9b84c;border-radius:14px;padding:22px;box-shadow:0 10px 35px #0009}
+  .panel h1{color:#ffd15b;margin:0 0 8px;font-size:clamp(24px,4vw,38px);text-shadow:3px 3px #000}
+  .panel p{line-height:1.5;color:#e7d7bd}
+  .panel button{font-size:16px;padding:10px 18px}
+  @media(max-width:600px){body{padding:4px}.game-shell{border-width:2px}.topbar{padding:7px}.hud{gap:7px;font-size:12px}.help{font-size:11px}}
+</style>
+</head>
+<body>
+<div class="game-shell">
+  <div class="topbar">
+    <div class="brand">🦇 BATMAN: FUGA DA CAVERNA</div>
+    <div class="hud"><span>⏱ <b id="timer">02:00</b></span><span>◆ <b id="score">0/8</b></span><button id="restart">Reiniciar ↻</button></div>
+  </div>
+  <div class="stage">
+    <canvas id="game" width="1100" height="650" aria-label="Jogo de plataforma do Batman"></canvas>
+    <div class="overlay" id="overlay">
+      <div class="panel">
+        <h1 id="overlayTitle">A missão começa!</h1>
+        <p id="overlayText">Ajude o Batman a atravessar a caverna, coletar os 8 morcegos dourados e alcançar a saída. Cuidado com o ácido verde!</p>
+        <p><strong>Controles:</strong> A/D ou ←/→ para andar · W, ↑ ou Espaço para pular.</p>
+        <button id="start">Jogar</button>
+      </div>
+    </div>
+  </div>
+  <div class="help"><span><strong>Movimento:</strong> A/D ou ←/→</span><span><strong>Pular:</strong> W, ↑ ou Espaço</span><span><strong>Objetivo:</strong> pegue todos os símbolos 🦇 e entre na porta.</span></div>
+</div>
+<script>
+(() => {
+const canvas = document.getElementById('game'), ctx = canvas.getContext('2d');
+const timerEl = document.getElementById('timer'), scoreEl = document.getElementById('score');
+const overlay = document.getElementById('overlay'), overlayTitle = document.getElementById('overlayTitle'), overlayText = document.getElementById('overlayText');
+const startBtn = document.getElementById('start'), restartBtn = document.getElementById('restart');
+const W=1100,H=650;
+const platforms = [
+  {x:0,y:0,w:W,h:22},{x:0,y:628,w:W,h:22},{x:0,y:0,w:22,h:H},{x:1078,y:0,w:22,h:H},
+  {x:22,y:135,w:155,h:22},{x:250,y:178,w:828,h:22},
+  {x:278,y:198,w:22,h:90},{x:278,y:268,w:145,h:22},
+  {x:468,y:265,w:22,h:80},{x:468,y:324,w:255,h:22},{x:695,y:345,w:30,h:22},
+  {x:22,y:390,w:1056,h:22},{x:22,y:485,w:210,h:22},{x:265,y:485,w:360,h:22},
+  {x:615,y:485,w:30,h:22},{x:644,y:525,w:434,h:22},
+  {x:22,y:575,w:450,h:22},{x:500,y:575,w:220,h:22},{x:770,y:575,w:308,h:22}
+];
+let player, gems, hazards, timeLeft, running=false, lastTime=0, elapsed=0, won=false, lost=false;
+const keys = {};
+function reset(){
+  player={x:55,y:525,w:27,h:42,vx:0,vy:0,onGround:false,face:1,invuln:0};
+  gems=[{x:110,y:112},{x:345,y:150},{x:520,y:235},{x:790,y:300},{x:980,y:360},{x:155,y:450},{x:580,y:450},{x:900,y:540}].map(g=>({...g,got:false}));
+  hazards=[{x:340,y:372,w:95,h:16},{x:720,y:557,w:100,h:16}];
+  timeLeft=120;elapsed=0;won=false;lost=false;scoreEl.textContent='0/8';timerEl.textContent='02:00';
+  overlay.style.display='grid';overlayTitle.textContent='A missão começa!';overlayText.textContent='Ajude o Batman a atravessar a caverna, coletar os 8 morcegos dourados e alcançar a saída. Cuidado com o ácido verde!';startBtn.textContent='Jogar';
+  draw();
+}
+function start(){if(won||lost)reset();running=true;overlay.style.display='none';lastTime=performance.now();requestAnimationFrame(loop)}
+function rects(a,b){return a.x < b.x+b.w && a.x+a.w > b.x && a.y < b.y+b.h && a.y+a.h > b.y}
+function move(dt){
+  const left=keys.ArrowLeft||keys.a||keys.A, right=keys.ArrowRight||keys.d||keys.D, jump=keys.ArrowUp||keys.w||keys.W||keys[' '];
+  const accel=1500, max=245;
+  if(left){player.vx-=accel*dt;player.face=-1} if(right){player.vx+=accel*dt;player.face=1}
+  if(!left&&!right)player.vx*=Math.pow(.001,dt);
+  player.vx=Math.max(-max,Math.min(max,player.vx));
+  if(jump&&player.onGround){player.vy=-510;player.onGround=false}
+  player.vy+=1250*dt;player.vy=Math.min(player.vy,650);
+  // Horizontal collision
+  player.x+=player.vx*dt;
+  for(const p of platforms) if(rects(player,p)){if(player.vx>0)player.x=p.x-player.w;else if(player.vx<0)player.x=p.x+p.w;player.vx=0}
+  // Vertical collision
+  player.y+=player.vy*dt;player.onGround=false;
+  for(const p of platforms) if(rects(player,p)){if(player.vy>0){player.y=p.y-player.h;player.onGround=true}else if(player.vy<0)player.y=p.y+p.h;player.vy=0}
+  // Gems
+  for(const g of gems) if(!g.got && rects(player,{x:g.x-12,y:g.y-12,w:24,h:24})){g.got=true;scoreEl.textContent=`${gems.filter(v=>v.got).length}/8`}
+  // Moving acid pools
+  elapsed+=dt;
+  hazards[0].x=340+Math.sin(elapsed*1.5)*55;
+  hazards[1].x=720+Math.sin(elapsed*1.15+1)*45;
+  if(player.invuln>0)player.invuln-=dt;
+  for(const h of hazards) if(rects(player,h)&&player.invuln<=0){player.x=55;player.y=525;player.vx=0;player.vy=0;player.invuln=1.2}
+  // Exit at upper-right
+  const exit={x:1015,y:105,w:48,h:70};
+  if(rects(player,exit)){
+    if(gems.every(g=>g.got)){won=true;finish(true)} else {player.x=Math.min(player.x,exit.x-player.w)}
+  }
+  if(player.y>H+30){player.x=55;player.y=525;player.vy=0}
+  timeLeft-=dt;
+  if(timeLeft<=0){timeLeft=0;lost=true;finish(false)}
+  timerEl.textContent=`${String(Math.floor(timeLeft/60)).padStart(2,'0')}:${String(Math.floor(timeLeft%60)).padStart(2,'0')}`;
+}
+function finish(success){running=false;overlay.style.display='grid';overlayTitle.textContent=success?'Missão cumprida! 🦇':'Tempo esgotado!';overlayText.textContent=success?'Batman escapou da caverna com todos os símbolos coletados. Gotham está segura!':'O tempo acabou. Tente novamente e recolha os 8 símbolos antes de sair.';startBtn.textContent='Jogar novamente';}
+function drawStone(p){
+  ctx.fillStyle='#bd853d';ctx.fillRect(p.x,p.y,p.w,p.h);
+  ctx.fillStyle='#e0ad59';ctx.fillRect(p.x+2,p.y+2,p.w-4,Math.min(5,p.h-3));
+  ctx.strokeStyle='#6c451f';ctx.lineWidth=2;ctx.strokeRect(p.x+1,p.y+1,p.w-2,p.h-2);
+  // brick seams
+  for(let x=p.x+24;x<p.x+p.w;x+=48){ctx.beginPath();ctx.moveTo(x,p.y);ctx.lineTo(x,p.y+p.h);ctx.stroke()}
+  if(p.h>25){for(let y=p.y+24;y<p.y+p.h;y+=24){ctx.beginPath();ctx.moveTo(p.x,y);ctx.lineTo(p.x+p.w,y);ctx.stroke()}}
+}
+function drawBatman(){
+  const p=player;ctx.save();if(p.invuln>0&&Math.floor(elapsed*15)%2===0)ctx.globalAlpha=.45;
+  // cape
+  ctx.fillStyle='#151a22';ctx.beginPath();ctx.moveTo(p.x+5,p.y+12);ctx.lineTo(p.x-7,p.y+37);ctx.lineTo(p.x+20,p.y+32);ctx.lineTo(p.x+25,p.y+12);ctx.closePath();ctx.fill();
+  // body
+  ctx.fillStyle='#343b47';ctx.fillRect(p.x+5,p.y+15,18,20);
+  ctx.fillStyle='#f1c84d';ctx.fillRect(p.x+5,p.y+23,18,4);
+  // head and ears
+  ctx.fillStyle='#202631';ctx.beginPath();ctx.moveTo(p.x+4,p.y+15);ctx.lineTo(p.x+5,p.y+4);ctx.lineTo(p.x+10,p.y+9);ctx.lineTo(p.x+18,p.y+9);ctx.lineTo(p.x+23,p.y+4);ctx.lineTo(p.x+24,p.y+15);ctx.quadraticCurveTo(p.x+14,p.y+22,p.x+4,p.y+15);ctx.fill();
+  ctx.fillStyle='#d6d9df';ctx.fillRect(p.x+8,p.y+12,4,2);ctx.fillRect(p.x+17,p.y+12,4,2);
+  // arms and boots
+  ctx.fillStyle='#242a35';ctx.fillRect(p.x+1,p.y+18,5,13);ctx.fillRect(p.x+22,p.y+18,5,13);
+  ctx.fillStyle='#10141a';ctx.fillRect(p.x+5,p.y+34,7,7);ctx.fillRect(p.x+16,p.y+34,7,7);
+  // bat emblem
+  ctx.fillStyle='#f5c94e';ctx.beginPath();ctx.moveTo(p.x+8,p.y+27);ctx.lineTo(p.x+12,p.y+25);ctx.lineTo(p.x+14,p.y+27);ctx.lineTo(p.x+17,p.y+25);ctx.lineTo(p.x+21,p.y+27);ctx.lineTo(p.x+17,p.y+29);ctx.lineTo(p.x+14,p.y+28);ctx.lineTo(p.x+11,p.y+29);ctx.closePath();ctx.fill();
+  ctx.restore();
+}
+function draw(){
+  const grad=ctx.createLinearGradient(0,0,0,H);grad.addColorStop(0,'#655039');grad.addColorStop(1,'#34251e');ctx.fillStyle=grad;ctx.fillRect(0,0,W,H);
+  // cave wall texture
+  ctx.globalAlpha=.18;ctx.strokeStyle='#d9b67d';ctx.lineWidth=2;
+  for(let y=45;y<H;y+=100){for(let x=(y%200?20:70);x<W;x+=180){ctx.strokeRect(x,y,150,78)}}
+  ctx.globalAlpha=1;
+  // frame
+  ctx.fillStyle='#d59b43';ctx.fillRect(0,0,W,20);ctx.fillRect(0,H-20,W,20);ctx.fillRect(0,0,20,H);ctx.fillRect(W-20,0,20,H);
+  for(const p of platforms)if(p.h>0)drawStone(p);
+  // exit door
+  ctx.fillStyle='#d39a43';ctx.fillRect(1010,100,58,78);ctx.fillStyle='#4b2b1b';ctx.fillRect(1017,107,44,65);ctx.strokeStyle='#f4c65a';ctx.lineWidth=3;ctx.strokeRect(1017,107,44,65);
+  ctx.fillStyle='#f7d35c';ctx.font='bold 22px sans-serif';ctx.fillText('🦇',1023,148);
+  // hazards
+  for(const h of hazards){ctx.fillStyle='#1c4b32';ctx.fillRect(h.x,h.y,h.w,h.h);ctx.fillStyle='#4be06b';ctx.fillRect(h.x+3,h.y+3,h.w-6,5);ctx.fillStyle='#9cff6e';for(let i=0;i<5;i++){ctx.beginPath();ctx.arc(h.x+12+i*(h.w-24)/4,h.y+5+Math.sin(elapsed*5+i)*2,2,0,Math.PI*2);ctx.fill()}}
+  // collectibles
+  for(const g of gems)if(!g.got){ctx.save();ctx.translate(g.x,g.y);ctx.rotate(Math.sin(elapsed*3+g.x)*.15);ctx.fillStyle='#ffd447';ctx.strokeStyle='#8a551a';ctx.lineWidth=2;ctx.beginPath();ctx.moveTo(-11,-3);ctx.lineTo(-6,-8);ctx.lineTo(0,-5);ctx.lineTo(6,-8);ctx.lineTo(11,-3);ctx.lineTo(8,4);ctx.lineTo(0,10);ctx.lineTo(-8,4);ctx.closePath();ctx.fill();ctx.stroke();ctx.fillStyle='#fff0a0';ctx.fillRect(-3,-5,3,8);ctx.restore()}
+  drawBatman();
+  // soft goal hint
+  if(!gems.every(g=>g.got)){ctx.fillStyle='#ffe5a0';ctx.font='bold 14px sans-serif';ctx.fillText('Colete todos os símbolos!',820,88)}
+}
+function loop(now){if(!running)return;const dt=Math.min((now-lastTime)/1000,.033);lastTime=now;move(dt);draw();if(running)requestAnimationFrame(loop)}
+window.addEventListener('keydown',e=>{const k=e.key;if(['ArrowLeft','ArrowRight','ArrowUp',' '].includes(k))e.preventDefault();keys[k]=true;if((k==='Enter')&&!running)start()});
+window.addEventListener('keyup',e=>keys[e.key]=false);
+startBtn.addEventListener('click',start);restartBtn.addEventListener('click',reset);
+reset();
+})();
+</script>
+</body>
+</html>
